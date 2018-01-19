@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/codegangsta/cli"
-	"github.com/phayes/hookserve/hookserve"
+	"github.com/tomashley/hookserve/hookserve"
 	"os"
 	"os/exec"
 )

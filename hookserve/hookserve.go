@@ -13,6 +13,7 @@ import (
 )
 
 var ErrInvalidEventFormat = errors.New("Unable to parse event string. Invalid Format.")
+var Version = "0.1.0"
 
 type Event struct {
 	Owner      string // The username of the owner of the repository
@@ -91,6 +92,7 @@ func (e *Event) String() (output string) {
 type Server struct {
 	Port       int        // Port to listen on. Defaults to 80
 	Path       string     // Path to receive on. Defaults to "/postreceive"
+	Ping       string     // application healthcheck. Defaults to "/ping"
 	Secret     string     // Option secret key for authenticating via HMAC
 	IgnoreTags bool       // If set to false, also execute command if tag is pushed
 	Events     chan Event // Channel of events. Read from this channel to get push events as they happen.
@@ -98,10 +100,12 @@ type Server struct {
 
 // Create a new server with sensible defaults.
 // By default the Port is set to 80 and the Path is set to `/postreceive`
+// Deafult healthcheck is on "/ping"
 func NewServer() *Server {
 	return &Server{
 		Port:       80,
 		Path:       "/postreceive",
+		Ping:       "/ping",
 		IgnoreTags: true,
 		Events:     make(chan Event, 10), // buffered to 10 items
 	}
@@ -136,6 +140,11 @@ func (s *Server) ignoreRef(rawRef string) bool {
 func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
+	// heathcheck
+	if req.Method == "GET" && req.URL.Path == s.Ping {
+		http.Error(w, "200 OK", http.StatusOK)
+		return
+	}
 	if req.Method != "POST" {
 		http.Error(w, "405 Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -273,5 +282,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.Events <- event
 	}()
 
+	w.Header().Set("Server", "hookserve/"+Version)
 	w.Write([]byte(event.String()))
 }
