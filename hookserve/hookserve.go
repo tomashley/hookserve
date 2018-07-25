@@ -171,9 +171,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, errormsg, http.StatusBadRequest)
 		return
 	}
-	if eventType != "push" && eventType != "pull_request" {
-		http.Error(w, "400 Bad Request - Unknown Event Type "+eventType, http.StatusBadRequest)
-		return
+
+	// github events
+	if s.Gitservice == "github" {
+		if eventType != "push" && eventType != "pull_request" {
+			http.Error(w, "400 Bad Request - Unknown Event Type "+eventType, http.StatusBadRequest)
+			return
+		}
+		// gitlab events
+	} else if s.Gitservice == "gitlab" {
+		if eventType != "Push Hook" && eventType != "Tag Push Hook" {
+			http.Error(w, "400 Bad Request - Unknown Event Type "+eventType, http.StatusBadRequest)
+			return
+		}
 	}
 
 	body, err := ioutil.ReadAll(req.Body)
@@ -184,20 +194,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// If we have a Secret set, we should check the MAC
 	if s.Secret != "" {
-		sig := req.Header.Get("X-Hub-Signature")
+		var sig string
+		if s.Gitservice == "github" {
+			sig = req.Header.Get("X-Hub-Signature")
+		} else if s.Gitservice == "gitlab" {
+			sig = req.Header.Get("X-Gitlab-Token")
+		}
 
 		if sig == "" {
-			http.Error(w, "403 Forbidden - Missing X-Hub-Signature required for HMAC verification", http.StatusForbidden)
+			http.Error(w, "403 Forbidden - Missing X-Hub-Signature required for HMAC/Secret verification", http.StatusForbidden)
 			return
 		}
 
-		mac := hmac.New(sha1.New, []byte(s.Secret))
-		mac.Write(body)
-		expectedMAC := mac.Sum(nil)
-		expectedSig := "sha1=" + hex.EncodeToString(expectedMAC)
-		if !hmac.Equal([]byte(expectedSig), []byte(sig)) {
-			http.Error(w, "403 Forbidden - HMAC verification failed", http.StatusForbidden)
-			return
+		if s.Gitservice == "github" {
+			mac := hmac.New(sha1.New, []byte(s.Secret))
+			mac.Write(body)
+			expectedMAC := mac.Sum(nil)
+			expectedSig := "sha1=" + hex.EncodeToString(expectedMAC)
+			if !hmac.Equal([]byte(expectedSig), []byte(sig)) {
+				http.Error(w, "403 Forbidden - HMAC verification failed", http.StatusForbidden)
+				return
+			}
+		} else if s.Gitservice == "gitlab" {
+			if sig != s.Secret {
+				http.Error(w, "403 Forbidden - Secret verification failed", http.StatusForbidden)
+				return
+			}
 		}
 	}
 
@@ -211,6 +233,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Parse the request and build the Event
 	event := Event{}
 
+	// GH event
 	if eventType == "push" {
 		rawRef, err := request.Get("ref").String()
 		if err != nil {
@@ -240,6 +263,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// GH event
 	} else if eventType == "pull_request" {
 		event.Action, err = request.Get("action").String()
 		if err != nil {
@@ -280,6 +304,40 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		event.BaseBranch, err = request.Get("pull_request").Get("base").Get("ref").String()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// GL event
+	} else if eventType == "Push Hook" || eventType == "Tag Push Hook" {
+		rawRef, err := request.Get("ref").String()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// If the ref is not a branch, we don't care about it
+		if s.ignoreRef(rawRef) || request.Get("head_commit").IsNull() {
+			return
+		}
+
+		// Fill in values
+		event.Type, err = request.Get("object_kind").String()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		event.Branch = rawRef[11:]
+		event.Repo, err = request.Get("repository").Get("name").String()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		event.Commit, err = request.Get("checkout_sha").String()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		event.Owner, err = request.Get("project").Get("namespace").String()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
