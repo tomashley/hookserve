@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/bmatsuo/go-jsontree"
 	"io/ioutil"
 	"net/http"
@@ -94,6 +95,7 @@ type Server struct {
 	Path       string     // Path to receive on. Defaults to "/postreceive"
 	Ping       string     // application healthcheck. Defaults to "/ping"
 	Secret     string     // Option secret key for authenticating via HMAC
+	Gitservice string     // Option service to choose hook from gitlab or github
 	IgnoreTags bool       // If set to false, also execute command if tag is pushed
 	Events     chan Event // Channel of events. Read from this channel to get push events as they happen.
 }
@@ -154,9 +156,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	eventType := req.Header.Get("X-GitHub-Event")
+	// check the Gitervice
+	var Xheader string
+	switch s.Gitservice {
+	case "github":
+		Xheader = "X-GitHub-Event"
+	case "gitlab":
+		Xheader = "X-GitLab-Event"
+	}
+
+	eventType := req.Header.Get(Xheader)
 	if eventType == "" {
-		http.Error(w, "400 Bad Request - Missing X-GitHub-Event Header", http.StatusBadRequest)
+		errormsg := fmt.Sprintf("400 Bad Request - Missing %s Header", Xheader)
+		http.Error(w, errormsg, http.StatusBadRequest)
 		return
 	}
 	if eventType != "push" && eventType != "pull_request" {

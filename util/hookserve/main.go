@@ -31,6 +31,11 @@ func main() {
 			Value: "",
 			Usage: "Secret for HMAC verification. If not provided no HMAC verification will be done and all valid requests will be processed",
 		},
+		cli.StringFlag{
+			Name:  "gitservice, g",
+			Value: "github",
+			Usage: "Service the hook is receving from, github or gitlab",
+		},
 		cli.BoolFlag{
 			Name:  "tags, t",
 			Usage: "Also execute the command when a tag is pushed",
@@ -41,6 +46,7 @@ func main() {
 		server := hookserve.NewServer()
 		server.Port = c.Int("port")
 		server.Secret = c.String("secret")
+		server.Gitservice = c.String("gitservice")
 		server.IgnoreTags = !c.Bool("tags")
 		server.GoListenAndServe()
 
